@@ -1,0 +1,7 @@
+AdfsTester.exe
+Tests/SelfTest.exe
+AdfsTester.config.txt
+*.user
+*.pdb
+ADFS-Tester-Report_*.txt
+ADFS-Tester-Report_*.html
