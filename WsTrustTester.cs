@@ -10,23 +10,36 @@ namespace AdfsTester
 {
     public static class WsTrustTester
     {
-        public static TestRun Run(AppConfig cfg, AdfsMetadata md)
+        public static TestRun Run(AppConfig cfg, AdfsMetadata md, TestDepth depth)
         {
             var run = new TestRun("WS-Trust");
             var endpoint = cfg.WsTrustUsernameMixed;
             run.Info("Endpoint", endpoint);
 
+            // Schnelltest: nur Erreichbarkeit des usernamemixed-Endpoints, ohne Zugangsdaten.
+            if (depth == TestDepth.Quick)
+            {
+                var probe = HttpHelper.Get(endpoint, cfg.TimeoutSeconds);
+                if (!probe.Transport)
+                    run.Add(ErrorLogger.ToCheckResult("WS-Trust Endpoint", "GET " + endpoint, probe.Error));
+                else
+                    run.Ok("WS-Trust Endpoint", "Endpoint erreichbar (HTTP " + probe.Status +
+                           ") - usernamemixed vorhanden. GET ohne SOAP liefert erwartungsgemaess kein Token.");
+                run.Info("Hinweis", "Fuer den echten Token-Bezug (Username/Passwort) den 'Tiefen Test' verwenden.");
+                return run;
+            }
+
             if (string.IsNullOrEmpty(cfg.Username) || string.IsNullOrEmpty(cfg.Password))
             {
                 run.Warn("Credentials", "Kein Username/Passwort konfiguriert.",
-                         "WS-Trust usernamemixed benoetigt Benutzername und Passwort fuer den nicht-interaktiven Token-Bezug.");
+                         "WS-Trust usernamemixed benoetigt Benutzername und Passwort (Tab 'Verbindung') fuer den Token-Bezug.");
                 return run;
             }
-            if (string.IsNullOrEmpty(cfg.Realm))
-                run.Warn("AppliesTo", "Kein Realm konfiguriert - AppliesTo bleibt leer; ADFS lehnt das meist ab.",
-                         "Realm = RP-Identifier setzen.");
+            if (string.IsNullOrEmpty(cfg.WsTrustAppliesTo))
+                run.Warn("AppliesTo", "Kein AppliesTo/RP-Identifier konfiguriert - ADFS lehnt das meist ab.",
+                         "RP-Identifier auf dem WS-Trust-Tab setzen.");
 
-            string envelope = BuildRst(endpoint, cfg.Realm, cfg.Username, cfg.Password);
+            string envelope = BuildRst(endpoint, cfg.WsTrustAppliesTo, cfg.Username, cfg.Password);
             run.Info("SOAP-Request", "RST (trust/13, Issue, UsernameToken) erzeugt.", MaskPassword(envelope, cfg.Password));
 
             var r = HttpHelper.PostRaw(endpoint, envelope,
@@ -51,7 +64,7 @@ namespace AdfsTester
             }
 
             run.Ok("WS-Trust Antwort", "HTTP 200 - RSTR empfangen (" + r.Body.Length + " Bytes).");
-            SamlInspect.Inspect(run, r.Body, md.PrimarySigningCert, cfg.Realm, "WS-Trust Token");
+            SamlInspect.Inspect(run, r.Body, md.PrimarySigningCert, cfg.WsTrustAppliesTo, "WS-Trust Token");
             return run;
         }
 

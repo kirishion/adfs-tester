@@ -37,21 +37,30 @@ Ticket exportieren.
 
 ## Bedienung
 
-1. ADFS-Host eintragen (z. B. `adfs.firma.tld`) und **Metadata & Zertifikate laden**.
-   Das prüft Erreichbarkeit und alle Zertifikate – schon das deckt die meisten
-   Störungen auf.
-2. Für Protokolltests Realm, Client-ID und gegebenenfalls Zugangsdaten ergänzen.
-   Jedes Feld hat einen Tooltip, der erklärt, wo der Wert in ADFS steht.
-3. **Alle Protokolle testen** oder einen einzelnen Protokoll-Tab ausführen.
+Auf dem Tab **Verbindung** den ADFS-Host eintragen (z. B. `adfs.firma.tld`) und
+**Metadata & Zertifikate laden**. Das prüft Erreichbarkeit und alle Zertifikate –
+schon das deckt die meisten Störungen auf.
 
-Es gibt zwei Betriebsarten:
+Jedes Protokoll hat einen eigenen Tab mit genau seinen Feldern (WS-Fed: Realm;
+WS-Trust: RP-Identifier; SAML: RP-Identifier, optional Signieren/Encryption-Zert;
+OIDC/OAuth: ClientId/Secret, Scope). Jedes Feld hat einen Tooltip, der erklärt, wo
+der Wert in ADFS bzw. in der Anwendungs-Konfiguration steht.
 
-- **Ohne Browser:** WS-Trust und OAuth Client-Credentials/ROPC holen mit den
-  hinterlegten Zugangsdaten direkt ein Token. Schnell und scriptbar.
-- **Interaktiv** (Haken setzen): WS-Fed, SAML und OAuth Authorization Code öffnen
-  den Standard-Browser für die echte Anmeldung. Dafür muss die Redirect-URI in ADFS
-  registriert sein. Das Tool fängt die Antwort über einen lokalen Loopback-Listener
-  ab – es wird keine Browser-Komponente eingebettet.
+Pro Tab (und für alle Protokolle zusammen) gibt es zwei Modi:
+
+- **Schnelltest:** ohne Browser und ohne Zugangsdaten. Prüft nur Erreichbarkeit,
+  Endpunkte, Zertifikate und ob die nötige Konfiguration vorhanden ist. Fehlende
+  protokollspezifische Felder sind dabei nur Hinweise. Ideal für einen ersten Check.
+- **Tiefer Test:** End-to-End. Führt die echte Anmeldung durch (System-Browser bei
+  WS-Fed/SAML/OAuth-Code bzw. Zugangsdaten bei WS-Trust/ROPC), holt ein Token und
+  prüft Signatur, Gültigkeit und Claims. Bei SAML zusätzlich: signierter
+  AuthnRequest (SignRequest) und Entschlüsselung verschlüsselter Assertions.
+
+Der Tiefe Test öffnet für die interaktiven Flows den Standard-Browser und fängt die
+Antwort über einen lokalen Loopback-Listener ab (keine eingebettete Browser-Komponente).
+Die Callback-URL vom Tab **Verbindung** muss dafür in ADFS registriert sein. Zum
+Signieren bzw. Entschlüsseln bei SAML wird der private Schlüssel des jeweiligen
+Zertifikats benötigt – das Tool also auf dem Server ausführen, wo dieser vorliegt.
 
 ## Selbst bauen
 

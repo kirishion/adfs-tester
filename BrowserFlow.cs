@@ -20,6 +20,9 @@ namespace AdfsTester
         public readonly Dictionary<string, string> Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public string RawRequest = "";
         public string Method = "";
+
+        // Komma-separierte Liste der empfangenen Parameter-Namen (fuer Diagnosen).
+        public string KeysCsv() { return string.Join(", ", new List<string>(Params.Keys).ToArray()); }
     }
 
     public static class BrowserFlow

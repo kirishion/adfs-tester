@@ -43,9 +43,11 @@ echo   -^> %OUT%
     "%DIR%HttpHelper.cs" ^
     "%DIR%CryptoHelpers.cs" ^
     "%DIR%CertificateInspector.cs" ^
+    "%DIR%CertStore.cs" ^
     "%DIR%MetadataClient.cs" ^
     "%DIR%BrowserFlow.cs" ^
     "%DIR%SamlInspect.cs" ^
+    "%DIR%SamlCrypto.cs" ^
     "%DIR%WsFedTester.cs" ^
     "%DIR%WsTrustTester.cs" ^
     "%DIR%SamlTester.cs" ^

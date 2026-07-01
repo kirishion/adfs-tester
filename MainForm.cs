@@ -1,6 +1,7 @@
 // ADFS-Test-Tool - Hauptfenster.
-// Tabs: Verbindung & Config | Metadata & Zertifikate | WS-Federation |
-//       WS-Trust | SAML 2.0 | OIDC/OAuth | Report
+// Jeder Protokoll-Tab enthaelt genau seine eigenen Eingabefelder. Der Tab
+// "Verbindung" haelt nur Gemeinsames (ADFS-Host, Callback-URL, Testbenutzer,
+// Optionen).
 
 using System;
 using System.Collections.Generic;
@@ -14,23 +15,40 @@ namespace AdfsTester
 {
     public sealed class MainForm : Form
     {
-        // Config-Felder
-        private TextBox txtAdfsHost, txtRealm, txtWreply, txtClientId, txtClientSecret,
-                        txtRedirectUri, txtScope, txtResource, txtUsername, txtPassword,
-                        txtTimeout, txtCertWarn;
-        private CheckBox chkShowSecrets, chkInteractive, chkVerifyCert;
-        private ToolTip _tip;
+        // Gemeinsam
+        private TextBox txtAdfsHost, txtRedirectUri, txtUsername, txtPassword, txtTimeout, txtCertWarn;
+        private CheckBox chkShowSecrets, chkVerifyCert;
+        // WS-Federation
+        private TextBox txtWsFedRealm, txtWsFedReply;
+        // WS-Trust
+        private TextBox txtWsTrustAppliesTo;
+        // SAML
+        private TextBox txtSamlRp, txtSamlSignStore, txtSamlSignThumb, txtSamlDecStore, txtSamlDecThumb, txtSamlClaim;
+        private CheckBox chkSamlSign;
+        private ComboBox cmbSamlSignLoc, cmbSamlDecLoc;
+        // OAuth / OIDC
+        private TextBox txtClientId, txtClientSecret, txtScope, txtResource;
 
-        // Ergebnis-Ansichten
         private readonly Dictionary<string, ResultView> _views = new Dictionary<string, ResultView>();
         private TextBox _reportBox;
+        private ToolTip _tip;      // Feld-Tooltips ("Wo finde ich das?")
+        private ToolTip _tipBtn;   // Modus-Tooltips (Schnell/Tief)
+
+        private const string QuickTip =
+            "Ohne Browser und ohne Zugangsdaten.\n\n" +
+            "Prueft nur Erreichbarkeit, Endpunkte, Metadaten/Zertifikate und ob die noetige\n" +
+            "Konfiguration da ist. Fehlende protokollspezifische Felder sind nur Hinweise.";
+        private const string DeepTip =
+            "End-to-End.\n\n" +
+            "Fuehrt die echte Anmeldung durch (System-Browser bzw. Zugangsdaten), holt ein\n" +
+            "Token und prueft Signatur/Claims (SAML: inkl. Signieren/Entschluesseln).\n" +
+            "Benoetigt die protokollspezifischen Felder dieses Tabs.";
 
         private MenuStrip _menu;
         private StatusStrip _status;
         private ToolStripStatusLabel _lblStatus, _lblSummary;
         private TabControl _tabs;
 
-        // Laufzeit-Status
         private AdfsMetadata _md;
         private readonly List<TestRun> _allRuns = new List<TestRun>();
         private bool _busy;
@@ -50,6 +68,9 @@ namespace AdfsTester
             Font = new Font("Segoe UI", 9.5F);
             BackColor = Color.FromArgb(243, 243, 247);
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+
+            _tip = MakeTip("Wo finde ich das?");
+            _tipBtn = MakeTip("Testmodus");
 
             BuildMenu();
             BuildStatus();
@@ -74,17 +95,22 @@ namespace AdfsTester
 
             var miRun = new ToolStripMenuItem("&Test");
             miRun.DropDownItems.Add(Item("Metadata && Zertifikate &laden", Keys.F5, (s, e) => RunMetadata()));
-            miRun.DropDownItems.Add(Item("&Alle Protokolle testen", Keys.F6, (s, e) => RunAll()));
+            miRun.DropDownItems.Add(Item("&Schnelltest (alle Protokolle)", Keys.F6, (s, e) => RunAll(TestDepth.Quick)));
+            miRun.DropDownItems.Add(Item("&Tiefer Test (alle Protokolle)", Keys.F7, (s, e) => RunAll(TestDepth.Deep)));
 
             var miHelp = new ToolStripMenuItem("&Hilfe");
             miHelp.DropDownItems.Add(Item("&ADFS-Hinweise ...", Keys.F1, (s, e) => ShowHelp()));
             miHelp.DropDownItems.Add(Item("&Ueber ...", Keys.None, (s, e) => ShowAbout()));
 
-            _menu.Items.Add(miFile);
-            _menu.Items.Add(miRun);
-            _menu.Items.Add(miHelp);
+            _menu.Items.Add(miFile); _menu.Items.Add(miRun); _menu.Items.Add(miHelp);
             MainMenuStrip = _menu;
             Controls.Add(_menu);
+        }
+
+        private static ToolTip MakeTip(string title)
+        {
+            return new ToolTip { AutoPopDelay = 30000, InitialDelay = 350, ReshowDelay = 80,
+                ShowAlways = true, ToolTipTitle = title, IsBalloon = true };
         }
 
         private static ToolStripMenuItem Item(string text, Keys keys, EventHandler h)
@@ -119,121 +145,63 @@ namespace AdfsTester
         private void BuildTabs()
         {
             _tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(12, 6) };
-
             _tabs.TabPages.Add(BuildConfigTab());
-            _tabs.TabPages.Add(BuildResultTab("Metadata & Zertifikate", "Metadata", false));
-            _tabs.TabPages.Add(BuildResultTab("WS-Federation", "WS-Federation", true));
-            _tabs.TabPages.Add(BuildResultTab("WS-Trust", "WS-Trust", false));
-            _tabs.TabPages.Add(BuildResultTab("SAML 2.0", "SAML 2.0", true));
-            _tabs.TabPages.Add(BuildResultTab("OIDC / OAuth", "OIDC / OAuth", true));
+            _tabs.TabPages.Add(BuildMetadataTab());
+            _tabs.TabPages.Add(BuildWsFedTab());
+            _tabs.TabPages.Add(BuildWsTrustTab());
+            _tabs.TabPages.Add(BuildSamlTab());
+            _tabs.TabPages.Add(BuildOidcTab());
             _tabs.TabPages.Add(BuildReportTab());
-
             Controls.Add(_tabs);
             _tabs.BringToFront();
         }
 
+        // ---- gemeinsamer Verbindungs-Tab ----
         private TabPage BuildConfigTab()
         {
-            var tab = new TabPage("Verbindung & Config") { BackColor = Color.White };
-
-            _tip = new ToolTip { AutoPopDelay = 30000, InitialDelay = 350, ReshowDelay = 80,
-                ShowAlways = true, ToolTipTitle = "Wo finde ich das?", IsBalloon = true };
+            var tab = new TabPage("Verbindung") { BackColor = Color.White };
 
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 58, BackColor = Color.White,
                 Padding = new Padding(12, 12, 8, 6), WrapContents = false };
-            buttons.Controls.Add(MakeButton("1) Metadata && Zertifikate laden  (F5)", 290, (s, e) => RunMetadata()));
-            buttons.Controls.Add(MakeButton("2) Alle Protokolle testen  (F6)", 240, (s, e) => RunAll()));
-            chkInteractive = new CheckBox { Text = "Interaktiv (Browser-Login) fuer WS-Fed / SAML / OIDC",
-                AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(18, 9, 0, 0), Cursor = Cursors.Help };
-            buttons.Controls.Add(chkInteractive);
-            _tip.SetToolTip(chkInteractive,
-                "Aus: schneller Test ohne Browser (Erreichbarkeit, Zertifikate, WS-Trust,\n" +
-                "OAuth Client-Credentials/ROPC).\n\n" +
-                "An: WS-Fed / SAML / OAuth-Code oeffnen den System-Browser zur echten\n" +
-                "Anmeldung. Voraussetzung: die Redirect-URI ist in ADFS registriert.");
+            buttons.Controls.Add(MakeButton("Metadata && Zertifikate laden  (F5)", 250, (s, e) => RunMetadata()));
+            var bQuickAll = MakeButton("Schnelltest (alle)  (F6)", 200, (s, e) => RunAll(TestDepth.Quick));
+            var bDeepAll = MakeButton("Tiefer Test (alle)  (F7)", 200, (s, e) => RunAll(TestDepth.Deep));
+            buttons.Controls.Add(bQuickAll);
+            buttons.Controls.Add(bDeepAll);
+            _tipBtn.SetToolTip(bQuickAll, QuickTip);
+            _tipBtn.SetToolTip(bDeepAll, DeepTip);
 
-            // 3-Spalten-Raster: Label | Eingabefeld (waechst mit) | Hinweis
-            var t = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoScroll = true,
-                BackColor = Color.White, Padding = new Padding(12, 10, 12, 10),
-                GrowStyle = TableLayoutPanelGrowStyle.AddRows };
-            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
-            t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
-
+            var t = NewFieldTable();
             txtAdfsHost = Row(t, "ADFS-Host / Basis-URL", "z.B. adfs.firma.tld",
-                "DNS-Name des ADFS-Dienstes (Federation Service Name).\n\n" +
-                "Zu finden in der ADFS-Verwaltung:\n" +
-                "AD FS > Aktion 'Verbunddiensteigenschaften bearbeiten' > Feld 'Verbunddienstname'.\n" +
-                "Oder die URL, die Benutzer beim Login sehen: https://<host>/adfs/ls\n" +
-                "PowerShell: (Get-AdfsProperties).HostName\n\n" +
-                "Beispiel: adfs.firma.tld");
-            txtRealm = Row(t, "Realm / RP-Identifier", "wtrealm bzw. SAML-Audience (= Trust-Identifier in ADFS)",
-                "Eindeutiger Bezeichner der Anwendung (Relying Party).\n\n" +
-                "ADFS-Verwaltung > 'Vertrauensstellungen der vertrauenden Seite'\n" +
-                "(Relying Party Trusts) > <Anwendung> > Eigenschaften > Reiter 'Bezeichner'.\n" +
-                "PowerShell: Get-AdfsRelyingPartyTrust | Select Name,Identifier\n\n" +
-                "WS-Fed = wtrealm, SAML = Audience / SP-EntityID.");
-            txtWreply = Row(t, "wreply (optional)", "WS-Fed Reply-URL fuer nicht-interaktiv",
-                "Optionale WS-Federation Antwort-URL (wohin das Token gesendet wird).\n\n" +
-                "ADFS > RP-Trust > Reiter 'Endpunkte' > WS-Federation Passive Endpoint.\n" +
-                "Nur fuer den nicht-interaktiven WS-Fed-Test noetig; sonst leer lassen.");
-            txtClientId = Row(t, "OAuth ClientId", "registrierte Client-ID",
-                "Client-Bezeichner der OAuth/OIDC-Anwendung.\n\n" +
-                "ADFS-Verwaltung > 'Anwendungsgruppen' > <Gruppe> > Anwendung\n" +
-                "(Server-/Web-/Native App) > Feld 'Clientbezeichner'.\n" +
-                "PowerShell: Get-AdfsApplicationGroup / Get-AdfsNativeClientApplication");
-            txtClientSecret = Row(t, "OAuth ClientSecret", "(DPAPI-verschluesselt gespeichert)",
-                "Geheimnis der OAuth-Anwendung (vertraulicher Client / Server Application).\n\n" +
-                "Wird bei der Registrierung in der Anwendungsgruppe EINMALIG angezeigt.\n" +
-                "Verloren? In der Anwendungsgruppe > Server Application ein neues generieren.\n" +
-                "Native/Public Clients haben KEIN Secret - dann leer lassen.", true);
-            txtRedirectUri = Row(t, "Redirect-URI", "muss in ADFS registriert sein; hoher Loopback-Port",
-                "Umleitungs-URI (Redirect/Reply URL) der OAuth-Anwendung.\n\n" +
-                "ADFS > Anwendungsgruppe > Anwendung > 'Umleitungs-URI'.\n" +
-                "Muss EXAKT uebereinstimmen (haeufigste OAuth-Fehlerquelle).\n\n" +
-                "Dieses Tool startet einen lokalen Listener auf einem hohen Loopback-Port.\n" +
-                "Genau diese URI (z.B. http://localhost:8765/adfs-tester/) in ADFS hinterlegen.");
-            txtScope = Row(t, "Scope", "z.B. openid",
-                "OAuth/OIDC-Scopes (durch Leerzeichen getrennt).\n\n" +
-                "'openid' anfordern, damit ADFS ein id_token ausstellt.\n" +
-                "Erlaubte Scopes der Web-App: ADFS > Anwendungsgruppe > Web-API >\n" +
-                "Reiter 'Clientberechtigungen'. PowerShell: Get-AdfsScopeDescription");
-            txtResource = Row(t, "Resource (optional)", "ADFS 'resource'-Parameter = RP-Identifier",
-                "ADFS-spezifischer 'resource'-Parameter = Bezeichner der Ziel-API/Anwendung\n" +
-                "(oft identisch mit dem Realm).\n\n" +
-                "= 'Bezeichner' der Web-API in der Anwendungsgruppe.\n" +
-                "In aelteren ADFS-OAuth-Flows erforderlich, in neueren via Scope ersetzt.");
-            txtUsername = Row(t, "Username (WS-Trust/ROPC)", "DOMAIN\\user oder UPN",
-                "Testbenutzer fuer nicht-interaktive Flows (WS-Trust / OAuth ROPC).\n\n" +
-                "Format: DOMAIN\\benutzer  oder  UPN (benutzer@firma.tld).\n" +
-                "Ein gueltiges AD-Konto mit Zugriff auf die Anwendung.\n" +
+                "DNS-Name des ADFS-Dienstes.\n\nADFS-Verwaltung > 'Verbunddiensteigenschaften bearbeiten' > Verbunddienstname,\n" +
+                "oder die Login-URL https://<host>/adfs/ls.\nIn eurer SAML-Config = ProviderURL / ProviderDestination (ohne /adfs/ls).\n" +
+                "PowerShell: (Get-AdfsProperties).HostName");
+            txtRedirectUri = Row(t, "Lokale Callback-URL", "fuer interaktive Tests (SAML-ACS + OAuth redirect_uri)",
+                "Auf diese URL laeuft ein lokaler Listener, der die Antwort im interaktiven Test abfaengt.\n\n" +
+                "Muss in ADFS erlaubt sein: als SAML Assertion Consumer Service bzw. als OAuth redirect_uri.\n" +
+                "Hoher Loopback-Port, z.B. http://localhost:8765/adfs-tester/");
+            txtUsername = Row(t, "Testbenutzer", "DOMAIN\\user oder UPN - fuer WS-Trust und OAuth ROPC",
+                "Konto fuer die nicht-interaktiven Flows (WS-Trust, OAuth ROPC).\nFormat DOMAIN\\benutzer oder benutzer@firma.tld.\n" +
                 "Fuer reine Erreichbarkeits-/Zertifikatstests nicht noetig.");
             txtPassword = Row(t, "Passwort", "(DPAPI-verschluesselt gespeichert)",
-                "Passwort des Testbenutzers.\n\n" +
-                "Wird nur lokal DPAPI-verschluesselt gespeichert und zum Token-Bezug an\n" +
-                "ADFS gesendet (WS-Trust usernamemixed bzw. OAuth ROPC).", true);
+                "Passwort des Testbenutzers. Nur lokal DPAPI-verschluesselt gespeichert.", true);
             txtTimeout = Row(t, "Timeout (Sek.)", "Standard 30",
-                "Maximale Wartezeit pro Netzwerk-/HTTP-Aufruf in Sekunden.\n" +
-                "Standard 30. Bei langsamen Verbindungen/Proxies erhoehen.");
+                "Maximale Wartezeit pro Netzwerk-/HTTP-Aufruf. Standard 30.");
             txtCertWarn = Row(t, "Cert-Warnung (Tage)", "Warnung wenn Zertifikat < X Tage gueltig",
-                "Schwellwert in Tagen: Zertifikate, die in weniger als dieser Zeit ablaufen,\n" +
-                "werden als Warnung (gelb) markiert. Standard 30.\n\n" +
-                "Abgelaufene Token-Signing-Zertifikate sind die haeufigste ADFS-Stoerung.");
+                "Zertifikate, die in weniger als dieser Zeit ablaufen, werden gelb markiert. Standard 30.");
 
             chkShowSecrets = new CheckBox { Text = "Secrets anzeigen", AutoSize = true, Margin = new Padding(3, 8, 3, 3) };
             chkShowSecrets.CheckedChanged += (s, e) =>
             {
                 char pc = chkShowSecrets.Checked ? '\0' : '●';
-                txtClientSecret.PasswordChar = pc; txtPassword.PasswordChar = pc;
+                txtPassword.PasswordChar = pc; if (txtClientSecret != null) txtClientSecret.PasswordChar = pc;
             };
             chkVerifyCert = new CheckBox { Text = "Server-Zertifikat strikt pruefen (aus = nur diagnostisch)",
                 AutoSize = true, Checked = true, Margin = new Padding(3, 4, 3, 6), Cursor = Cursors.Help };
-            _tip.SetToolTip(chkShowSecrets, "Zeigt ClientSecret und Passwort im Klartext an (sonst maskiert).");
             _tip.SetToolTip(chkVerifyCert,
                 "An: HTTP-Aufrufe brechen bei ungueltigem TLS-Zertifikat ab (normaler Modus).\n\n" +
-                "Aus: Zertifikatfehler werden bei HTTP-Aufrufen ignoriert, damit Metadata/Token\n" +
-                "auch bei Self-Signed-/Testumgebungen geladen werden koennen. Die Zertifikats-\n" +
-                "pruefung selbst (Tab 'Metadata & Zertifikate') laeuft unabhaengig davon weiter.");
+                "Aus: Zertifikatfehler werden bei HTTP-Aufrufen ignoriert (Self-Signed/Testumgebung).\n" +
+                "Die Zertifikatspruefung im Tab 'Metadata & Zertifikate' laeuft unabhaengig weiter.");
             AddCheckRow(t, chkShowSecrets);
             AddCheckRow(t, chkVerifyCert);
 
@@ -242,8 +210,122 @@ namespace AdfsTester
             return tab;
         }
 
-        // Eine Formularzeile: Label | mitwachsendes Eingabefeld | grauer Hinweis.
-        // tooltip beschreibt, WO der Wert in ADFS zu finden ist (an allen 3 Teilen).
+        private TabPage BuildMetadataTab()
+        {
+            var tab = new TabPage("Metadata & Zertifikate") { BackColor = Color.White };
+            var view = new ResultView(); _views["Metadata"] = view;
+            var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, BackColor = Color.White,
+                Padding = new Padding(10, 9, 0, 0), WrapContents = false };
+            top.Controls.Add(MakeButton("Metadata && Zertifikate laden", 230, (s, e) => RunMetadata()));
+            tab.Controls.Add(view);
+            tab.Controls.Add(top);
+            return tab;
+        }
+
+        private TabPage BuildWsFedTab()
+        {
+            return ProtocolTab("WS-Federation", "WS-Federation", t =>
+            {
+                txtWsFedRealm = Row(t, "Realm (wtrealm)", "RP-Identifier / Trust Identifier",
+                    "Der 'wtrealm' der Anwendung.\n\nADFS > 'Vertrauensstellungen der vertrauenden Seite' >\n" +
+                    "<App> > Eigenschaften > Bezeichner.\nPowerShell: Get-AdfsRelyingPartyTrust | Select Name,Identifier");
+                txtWsFedReply = Row(t, "wreply (optional)", "WS-Fed Reply-URL fuer nicht-interaktiv",
+                    "Optionale Antwort-URL. ADFS > RP-Trust > Endpunkte > WS-Federation Passive Endpoint.\n" +
+                    "Im interaktiven Test nutzt das Tool die lokale Callback-URL.");
+            });
+        }
+
+        private TabPage BuildWsTrustTab()
+        {
+            return ProtocolTab("WS-Trust", "WS-Trust", t =>
+            {
+                txtWsTrustAppliesTo = Row(t, "RP-Identifier (AppliesTo)", "Ziel der Token-Anforderung",
+                    "Der RP-Identifier, fuer den das Token ausgestellt wird (AppliesTo).\n\n" +
+                    "Meist identisch mit dem Bezeichner der Relying Party in ADFS.");
+                InfoRow(t, "Nutzt Testbenutzer + Passwort vom Tab 'Verbindung' (usernamemixed-Endpoint, ohne Browser).");
+            });
+        }
+
+        private TabPage BuildSamlTab()
+        {
+            return ProtocolTab("SAML 2.0", "SAML 2.0", t =>
+            {
+                txtSamlRp = Row(t, "RP-Identifier", "Issuer / Audience (RelyingPartyIdentifier)",
+                    "SAML Issuer/Audience der Anwendung.\n\nIn eurer CNSamlProvider-Config = RelyingPartyIdentifier\n" +
+                    "(z.B. https://sso-casenet.../).\nADFS > RP-Trust > Bezeichner.");
+                chkSamlSign = RowCheck(t, "AuthnRequest signieren (SignRequest)",
+                    "Entspricht SignRequest=\"True\" in eurer Config: ADFS verlangt einen signierten\n" +
+                    "AuthnRequest. Das Tool signiert dann per HTTP-Redirect-Binding (RSA-SHA256) mit dem\n" +
+                    "unten gewaehlten Zertifikat (privater Schluessel noetig).");
+                cmbSamlSignLoc = RowCombo(t, "Signatur-Zert Store", "Speicherort", new[] { "LocalMachine", "CurrentUser" },
+                    "Store-Ort des Signatur-Zertifikats.\nIn eurer Config: SignatureCertStoreLocation (LocalMachine).");
+                txtSamlSignStore = Row(t, "Signatur-Zert Store-Name", "z.B. My oder Root",
+                    "Store-Name. In eurer Config: SignatureCertStoreName (Root). Ueblich fuer eigene Schluessel: My.");
+                txtSamlSignThumb = Row(t, "Signatur-Zert Thumbprint", "Fingerabdruck des Signatur-Zertifikats",
+                    "In eurer Config: SignatureCertThumbprint.\nZertifikat muss den privaten Schluessel enthalten (zum Signieren).");
+                cmbSamlDecLoc = RowCombo(t, "Encryption-Zert Store", "Speicherort", new[] { "LocalMachine", "CurrentUser" },
+                    "Store-Ort des Encryption-Zertifikats (zum Entschluesseln verschluesselter Assertions).\n" +
+                    "In eurer Config: EncryptionCertStoreLocation.");
+                txtSamlDecStore = Row(t, "Encryption-Zert Store-Name", "z.B. My oder Root",
+                    "Store-Name. In eurer Config: EncryptionCertStoreName (Root).");
+                txtSamlDecThumb = Row(t, "Encryption-Zert Thumbprint", "fuer verschluesselte Assertions (optional)",
+                    "In eurer Config: EncryptionCertThumbprint.\nNur noetig, wenn ADFS die Assertion verschluesselt (EncryptedAssertion).\n" +
+                    "Zertifikat muss den privaten Schluessel enthalten.");
+                txtSamlClaim = Row(t, "Erwarteter Claim (optional)", "z.B. upn oder emailaddress",
+                    "Optional: dieser Claim muss im Token vorkommen.\nIn eurer Config: Claim (z.B. .../claims/upn).\n" +
+                    "Teil-/Endstueck des Namens genuegt (z.B. 'upn').");
+                InfoRow(t, "Interaktiver Modus: der System-Browser oeffnet die Anmeldung; die SAMLResponse wird ueber die lokale Callback-URL ausgewertet.");
+            });
+        }
+
+        private TabPage BuildOidcTab()
+        {
+            return ProtocolTab("OIDC / OAuth", "OIDC / OAuth", t =>
+            {
+                txtClientId = Row(t, "ClientId", "registrierte Client-ID",
+                    "Client-Bezeichner der OAuth/OIDC-Anwendung.\nADFS > 'Anwendungsgruppen' > <Gruppe> > Anwendung > Clientbezeichner.");
+                txtClientSecret = Row(t, "ClientSecret", "(DPAPI-verschluesselt gespeichert)",
+                    "Geheimnis vertraulicher Clients (Server Application). Native/Public Clients: leer lassen.", true);
+                txtScope = Row(t, "Scope", "z.B. openid",
+                    "OAuth/OIDC-Scopes. 'openid' fuer ein id_token.");
+                txtResource = Row(t, "Resource (optional)", "ADFS 'resource' = RP-Identifier der Ziel-API",
+                    "ADFS-spezifischer resource-Parameter (aeltere Flows). = Bezeichner der Web-API in der Anwendungsgruppe.");
+                InfoRow(t, "Client-Credentials: ClientId + ClientSecret. ROPC: zusaetzlich Testbenutzer vom Tab 'Verbindung'. Authorization-Code: interaktiv (Callback-URL).");
+            });
+        }
+
+        // Baut einen Protokoll-Tab: Felder (oben) + Run-Button + Ergebnis-Ansicht.
+        private TabPage ProtocolTab(string title, string key, Action<TableLayoutPanel> addFields)
+        {
+            var tab = new TabPage(title) { BackColor = Color.White };
+            var view = new ResultView(); _views[key] = view;
+            var t = NewFieldTable();
+            addFields(t);
+            var bQuick = MakeButton("Schnelltest", 150, (s, e) => RunSingle(key, TestDepth.Quick));
+            var bDeep = MakeButton("Tiefer Test", 150, (s, e) => RunSingle(key, TestDepth.Deep));
+            bQuick.Margin = new Padding(3, 8, 8, 8);
+            bDeep.Margin = new Padding(0, 8, 3, 8);
+            _tipBtn.SetToolTip(bQuick, QuickTip);
+            _tipBtn.SetToolTip(bDeep, DeepTip);
+            var btnRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+            btnRow.Controls.Add(bQuick); btnRow.Controls.Add(bDeep);
+            t.Controls.Add(new Label()); t.Controls.Add(btnRow); t.Controls.Add(new Label());
+            tab.Controls.Add(view);
+            tab.Controls.Add(t);
+            return tab;
+        }
+
+        private TableLayoutPanel NewFieldTable()
+        {
+            var t = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true,
+                BackColor = Color.White, Padding = new Padding(12, 10, 12, 8),
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows };
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
+            return t;
+        }
+
         private TextBox Row(TableLayoutPanel t, string label, string hint, string tooltip, bool secret = false)
         {
             var lbl = new Label { Text = "ⓘ " + label, AutoSize = false, Dock = DockStyle.Fill,
@@ -257,38 +339,53 @@ namespace AdfsTester
                 TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.Gray, Margin = new Padding(8, 5, 3, 5),
                 Cursor = Cursors.Help };
             t.Controls.Add(hintLbl);
-            if (!string.IsNullOrEmpty(tooltip) && _tip != null)
-            {
-                _tip.SetToolTip(lbl, tooltip);
-                _tip.SetToolTip(box, tooltip);
-                _tip.SetToolTip(hintLbl, tooltip);
-            }
+            if (!string.IsNullOrEmpty(tooltip))
+            { _tip.SetToolTip(lbl, tooltip); _tip.SetToolTip(box, tooltip); _tip.SetToolTip(hintLbl, tooltip); }
             return box;
+        }
+
+        private ComboBox RowCombo(TableLayoutPanel t, string label, string hint, string[] items, string tooltip)
+        {
+            var lbl = new Label { Text = "ⓘ " + label, AutoSize = false, Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft, ForeColor = LABEL_FORE, Margin = new Padding(3, 5, 3, 5),
+                Cursor = Cursors.Help };
+            t.Controls.Add(lbl);
+            var cmb = new ComboBox { Dock = DockStyle.Left, Width = 180, DropDownStyle = ComboBoxStyle.DropDownList,
+                Margin = new Padding(3, 5, 3, 5) };
+            cmb.Items.AddRange(items);
+            cmb.SelectedIndex = 0;
+            t.Controls.Add(cmb);
+            var hintLbl = new Label { Text = hint, AutoSize = false, Dock = DockStyle.Fill, AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.Gray, Margin = new Padding(8, 5, 3, 5) };
+            t.Controls.Add(hintLbl);
+            if (!string.IsNullOrEmpty(tooltip)) { _tip.SetToolTip(lbl, tooltip); _tip.SetToolTip(cmb, tooltip); }
+            return cmb;
+        }
+
+        private CheckBox RowCheck(TableLayoutPanel t, string text, string tooltip)
+        {
+            t.Controls.Add(new Label());
+            var cb = new CheckBox { Text = text, AutoSize = true, Margin = new Padding(3, 6, 3, 3), Cursor = Cursors.Help };
+            t.Controls.Add(cb);
+            t.Controls.Add(new Label());
+            if (!string.IsNullOrEmpty(tooltip)) _tip.SetToolTip(cb, tooltip);
+            return cb;
+        }
+
+        private void InfoRow(TableLayoutPanel t, string text)
+        {
+            t.Controls.Add(new Label());
+            var l = new Label { Text = text, AutoSize = true, ForeColor = Color.FromArgb(0, 103, 192),
+                Margin = new Padding(3, 8, 3, 3), MaximumSize = new Size(700, 0) };
+            t.Controls.Add(l);
+            t.Controls.Add(new Label());
         }
 
         private static void AddCheckRow(TableLayoutPanel t, CheckBox cb)
         {
-            t.Controls.Add(new Label());   // Spalte 0 leer
-            t.Controls.Add(cb);            // Spalte 1: Checkbox
-            t.Controls.Add(new Label());   // Spalte 2 leer
-        }
-
-        private TabPage BuildResultTab(string title, string key, bool perTabInteractive)
-        {
-            var tab = new TabPage(title) { BackColor = Color.White };
-            var view = new ResultView();
-            _views[key] = view;
-
-            var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, BackColor = Color.White,
-                Padding = new Padding(10, 9, 0, 0), WrapContents = false };
-            if (key == "Metadata")
-                top.Controls.Add(MakeButton("Metadata && Zertifikate laden", 230, (s, e) => RunMetadata()));
-            else
-                top.Controls.Add(MakeButton("Diesen Test ausfuehren", 190, (s, e) => RunSingle(key)));
-
-            tab.Controls.Add(view);
-            tab.Controls.Add(top);
-            return tab;
+            t.Controls.Add(new Label());
+            t.Controls.Add(cb);
+            t.Controls.Add(new Label());
         }
 
         private TabPage BuildReportTab()
@@ -324,18 +421,32 @@ namespace AdfsTester
             return new AppConfig
             {
                 AdfsHost = txtAdfsHost.Text.Trim(),
-                Realm = txtRealm.Text.Trim(),
-                Wreply = txtWreply.Text.Trim(),
-                ClientId = txtClientId.Text.Trim(),
-                ClientSecret = txtClientSecret.Text,
                 RedirectUri = txtRedirectUri.Text.Trim(),
-                Scope = txtScope.Text.Trim(),
-                OAuthResource = txtResource.Text.Trim(),
                 Username = txtUsername.Text.Trim(),
                 Password = txtPassword.Text,
                 TimeoutSeconds = ParseInt(txtTimeout.Text, 30),
                 CertWarnDays = ParseInt(txtCertWarn.Text, 30),
-                VerifyServerCert = chkVerifyCert.Checked
+                VerifyServerCert = chkVerifyCert.Checked,
+
+                WsFedRealm = txtWsFedRealm.Text.Trim(),
+                WsFedReply = txtWsFedReply.Text.Trim(),
+
+                WsTrustAppliesTo = txtWsTrustAppliesTo.Text.Trim(),
+
+                SamlRpIdentifier = txtSamlRp.Text.Trim(),
+                SamlSignRequest = chkSamlSign.Checked,
+                SamlSignStoreLocation = cmbSamlSignLoc.SelectedItem != null ? cmbSamlSignLoc.SelectedItem.ToString() : "LocalMachine",
+                SamlSignStoreName = txtSamlSignStore.Text.Trim(),
+                SamlSignThumbprint = txtSamlSignThumb.Text.Trim(),
+                SamlDecryptStoreLocation = cmbSamlDecLoc.SelectedItem != null ? cmbSamlDecLoc.SelectedItem.ToString() : "LocalMachine",
+                SamlDecryptStoreName = txtSamlDecStore.Text.Trim(),
+                SamlDecryptThumbprint = txtSamlDecThumb.Text.Trim(),
+                SamlExpectedClaim = txtSamlClaim.Text.Trim(),
+
+                ClientId = txtClientId.Text.Trim(),
+                ClientSecret = txtClientSecret.Text,
+                Scope = txtScope.Text.Trim(),
+                OAuthResource = txtResource.Text.Trim()
             };
         }
 
@@ -350,20 +461,20 @@ namespace AdfsTester
             });
         }
 
-        private void RunAll()
+        private void RunAll(TestDepth depth)
         {
-            RunInBackground("Teste alle Protokolle ...", cfg =>
+            string mode = depth == TestDepth.Deep ? "Tiefer Test" : "Schnelltest";
+            RunInBackground(mode + ": alle Protokolle ...", cfg =>
             {
                 _allRuns.Clear();
                 var meta = new TestRun("Metadata & Zertifikate");
                 EndpointCertChecks(meta, cfg);
                 _md = MetadataClient.Load(meta, cfg);
-                bool interactive = GetInteractive();
 
-                var wsfed = WsFedTester.Run(cfg, _md, interactive);
-                var wstrust = WsTrustTester.Run(cfg, _md);
-                var saml = SamlTester.Run(cfg, _md, interactive);
-                var oidc = OidcTester.Run(cfg, _md, interactive);
+                var wsfed = WsFedTester.Run(cfg, _md, depth);
+                var wstrust = WsTrustTester.Run(cfg, _md, depth);
+                var saml = SamlTester.Run(cfg, _md, depth);
+                var oidc = OidcTester.Run(cfg, _md, depth);
 
                 BeginInvoke(new Action(() =>
                 {
@@ -378,9 +489,10 @@ namespace AdfsTester
             });
         }
 
-        private void RunSingle(string key)
+        private void RunSingle(string key, TestDepth depth)
         {
-            RunInBackground("Teste " + key + " ...", cfg =>
+            string mode = depth == TestDepth.Deep ? "Tiefer Test" : "Schnelltest";
+            RunInBackground(mode + ": " + key + " ...", cfg =>
             {
                 if (_md == null)
                 {
@@ -389,21 +501,19 @@ namespace AdfsTester
                     _md = MetadataClient.Load(meta, cfg);
                     BeginInvoke(new Action(() => { _views["Metadata"].Populate(meta); StoreRun(meta); }));
                 }
-                bool interactive = GetInteractive();
                 TestRun run;
                 switch (key)
                 {
-                    case "WS-Federation": run = WsFedTester.Run(cfg, _md, interactive); break;
-                    case "WS-Trust": run = WsTrustTester.Run(cfg, _md); break;
-                    case "SAML 2.0": run = SamlTester.Run(cfg, _md, interactive); break;
-                    case "OIDC / OAuth": run = OidcTester.Run(cfg, _md, interactive); break;
+                    case "WS-Federation": run = WsFedTester.Run(cfg, _md, depth); break;
+                    case "WS-Trust": run = WsTrustTester.Run(cfg, _md, depth); break;
+                    case "SAML 2.0": run = SamlTester.Run(cfg, _md, depth); break;
+                    case "OIDC / OAuth": run = OidcTester.Run(cfg, _md, depth); break;
                     default: return;
                 }
                 BeginInvoke(new Action(() => { _views[key].Populate(run); StoreRun(run); }));
             });
         }
 
-        // TLS-/Zertifikatspruefung des ADFS-Hosts (Teil von Metadata-Tab)
         private void EndpointCertChecks(TestRun run, AppConfig cfg)
         {
             try
@@ -412,18 +522,7 @@ namespace AdfsTester
                 int port = uri.Port > 0 ? uri.Port : 443;
                 CertificateInspector.InspectEndpoint(run, uri.Host, port, cfg.CertWarnDays, cfg.TimeoutSeconds);
             }
-            catch (Exception ex)
-            {
-                run.Add(ErrorLogger.ToCheckResult("ADFS-Host", "URL '" + cfg.AdfsHost + "'", ex));
-            }
-        }
-
-        private bool GetInteractive()
-        {
-            bool v = false;
-            if (InvokeRequired) Invoke(new Action(() => v = chkInteractive.Checked));
-            else v = chkInteractive.Checked;
-            return v;
+            catch (Exception ex) { run.Add(ErrorLogger.ToCheckResult("ADFS-Host", "URL '" + cfg.AdfsHost + "'", ex)); }
         }
 
         private void RunInBackground(string statusText, Action<AppConfig> work)
@@ -431,9 +530,8 @@ namespace AdfsTester
             if (_busy) { MessageBox.Show("Es laeuft bereits ein Test.", "Bitte warten", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
             AppConfig cfg = BuildConfig();
             if (string.IsNullOrEmpty(cfg.AdfsHost))
-            { MessageBox.Show("Bitte ADFS-Host angeben.", "Eingabe fehlt", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
+            { MessageBox.Show("Bitte ADFS-Host angeben (Tab 'Verbindung').", "Eingabe fehlt", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
 
-            // 'strikt pruefen' aus -> Zertifikatfehler bei HTTP-Aufrufen ignorieren (nur Diagnose).
             System.Net.ServicePointManager.ServerCertificateValidationCallback =
                 cfg.VerifyServerCert ? (System.Net.Security.RemoteCertificateValidationCallback)null
                                      : ((s, c, ch, e) => true);
@@ -513,15 +611,34 @@ namespace AdfsTester
             try
             {
                 var c = AppConfig.Load(ConfigFile);
-                txtAdfsHost.Text = c.AdfsHost; txtRealm.Text = c.Realm; txtWreply.Text = c.Wreply;
-                txtClientId.Text = c.ClientId; txtClientSecret.Text = c.ClientSecret;
-                txtRedirectUri.Text = c.RedirectUri; txtScope.Text = c.Scope; txtResource.Text = c.OAuthResource;
+                txtAdfsHost.Text = c.AdfsHost; txtRedirectUri.Text = c.RedirectUri;
                 txtUsername.Text = c.Username; txtPassword.Text = c.Password;
                 txtTimeout.Text = c.TimeoutSeconds.ToString(CultureInfo.InvariantCulture);
                 txtCertWarn.Text = c.CertWarnDays.ToString(CultureInfo.InvariantCulture);
                 chkVerifyCert.Checked = c.VerifyServerCert;
+
+                txtWsFedRealm.Text = c.WsFedRealm; txtWsFedReply.Text = c.WsFedReply;
+                txtWsTrustAppliesTo.Text = c.WsTrustAppliesTo;
+
+                txtSamlRp.Text = c.SamlRpIdentifier;
+                chkSamlSign.Checked = c.SamlSignRequest;
+                SelectCombo(cmbSamlSignLoc, c.SamlSignStoreLocation);
+                txtSamlSignStore.Text = c.SamlSignStoreName; txtSamlSignThumb.Text = c.SamlSignThumbprint;
+                SelectCombo(cmbSamlDecLoc, c.SamlDecryptStoreLocation);
+                txtSamlDecStore.Text = c.SamlDecryptStoreName; txtSamlDecThumb.Text = c.SamlDecryptThumbprint;
+                txtSamlClaim.Text = c.SamlExpectedClaim;
+
+                txtClientId.Text = c.ClientId; txtClientSecret.Text = c.ClientSecret;
+                txtScope.Text = c.Scope; txtResource.Text = c.OAuthResource;
             }
             catch (Exception ex) { SetStatus("Config-Laden fehlgeschlagen: " + ex.Message, Color.FromArgb(196, 43, 28)); }
+        }
+
+        private static void SelectCombo(ComboBox cmb, string value)
+        {
+            if (cmb == null) return;
+            int idx = cmb.Items.IndexOf(value ?? "");
+            cmb.SelectedIndex = idx >= 0 ? idx : 0;
         }
 
         private void SaveConfigSafe()
@@ -539,18 +656,22 @@ namespace AdfsTester
         {
             MessageBox.Show(
                 "ADFS-Tester - Kurzanleitung\r\n\r\n" +
-                "1) ADFS-Host eintragen (z.B. adfs.firma.tld) und 'Metadata & Zertifikate laden'.\r\n" +
-                "   -> prueft TLS/SSL, Zertifikatskette, Token-Signing-/Encryption-Zertifikate.\r\n\r\n" +
-                "2) Fuer Protokoll-Tests Realm/ClientId/Credentials ausfuellen.\r\n\r\n" +
-                "Nicht-interaktiv (ohne Browser):\r\n" +
-                "  - WS-Trust: Username + Passwort -> SAML-Token\r\n" +
-                "  - OAuth Client-Credentials: ClientId + ClientSecret\r\n" +
-                "  - OAuth ROPC: ClientId + Username + Passwort\r\n\r\n" +
-                "Interaktiv (Checkbox 'Interaktiv'):\r\n" +
-                "  - WS-Fed / SAML / OAuth-Code oeffnen den System-Browser.\r\n" +
-                "  - Die Redirect-URI muss EXAKT in ADFS registriert sein\r\n" +
-                "    (hoher Loopback-Port, z.B. http://localhost:8765/adfs-tester/).\r\n\r\n" +
-                "Report-Tab: Gesamtuebersicht, Export als TXT/HTML fuer Support-Tickets.",
+                "Tab 'Verbindung': ADFS-Host, lokale Callback-URL und (fuer nicht-interaktive Tests)\r\n" +
+                "Testbenutzer/Passwort. Dann 'Metadata & Zertifikate laden' - das prueft TLS, Kette und\r\n" +
+                "Token-Zertifikate.\r\n\r\n" +
+                "Jeder Protokoll-Tab enthaelt genau seine eigenen Felder und zwei Buttons:\r\n" +
+                "  Schnelltest : ohne Browser/Zugangsdaten - prueft nur Erreichbarkeit,\r\n" +
+                "                Endpunkte und Konfiguration. Ideal fuer einen ersten Check.\r\n" +
+                "  Tiefer Test : End-to-End - echte Anmeldung (Browser bzw. Zugangsdaten),\r\n" +
+                "                Token holen, Signatur/Claims pruefen (SAML: Signieren/Entschluesseln).\r\n\r\n" +
+                "Felder je Tab:\r\n" +
+                "  WS-Federation : Realm (wtrealm)\r\n" +
+                "  WS-Trust      : RP-Identifier (nutzt Testbenutzer vom Tab 'Verbindung')\r\n" +
+                "  SAML 2.0      : RP-Identifier, optional AuthnRequest signieren + Encryption-Zert\r\n" +
+                "  OIDC / OAuth  : ClientId/Secret, Scope, Resource\r\n\r\n" +
+                "Der Tiefe Test oeffnet fuer WS-Fed/SAML/OAuth-Code den Browser; die Callback-URL\r\n" +
+                "(Tab 'Verbindung') muss dafuer in ADFS registriert sein.\r\n\r\n" +
+                "Jedes Feld hat einen Tooltip mit dem Fundort in ADFS bzw. in eurer Config.",
                 "Hilfe", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 

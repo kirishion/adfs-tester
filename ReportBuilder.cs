@@ -15,9 +15,10 @@ namespace AdfsTester
             sb.AppendLine("==================================================================");
             sb.AppendLine(" ADFS-Tester - Diagnosebericht");
             sb.AppendLine(" Erstellt : " + generatedAt);
-            sb.AppendLine(" ADFS-Host: " + cfg.BaseUrl);
-            sb.AppendLine(" Realm    : " + cfg.Realm);
-            sb.AppendLine(" ClientId : " + cfg.ClientId);
+            sb.AppendLine(" ADFS-Host    : " + cfg.BaseUrl);
+            sb.AppendLine(" SAML RP-Id   : " + cfg.SamlRpIdentifier);
+            sb.AppendLine(" WS-Fed Realm : " + cfg.WsFedRealm);
+            sb.AppendLine(" OAuth ClientId: " + cfg.ClientId);
             sb.AppendLine("==================================================================");
             sb.AppendLine();
 
@@ -64,7 +65,8 @@ namespace AdfsTester
             sb.AppendLine("<h1>ADFS-Tester &ndash; Diagnosebericht</h1>");
             sb.AppendLine("<div class='meta'>");
             sb.AppendLine("Erstellt: <b>" + H(generatedAt) + "</b><br>ADFS-Host: <b>" + H(cfg.BaseUrl) + "</b><br>");
-            sb.AppendLine("Realm: <b>" + H(cfg.Realm) + "</b><br>ClientId: <b>" + H(cfg.ClientId) + "</b></div>");
+            sb.AppendLine("SAML RP-Id: <b>" + H(cfg.SamlRpIdentifier) + "</b><br>WS-Fed Realm: <b>" + H(cfg.WsFedRealm) +
+                          "</b><br>OAuth ClientId: <b>" + H(cfg.ClientId) + "</b></div>");
 
             foreach (var run in runs)
             {

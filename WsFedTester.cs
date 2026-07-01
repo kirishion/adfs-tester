@@ -8,21 +8,27 @@ namespace AdfsTester
 {
     public static class WsFedTester
     {
-        public static TestRun Run(AppConfig cfg, AdfsMetadata md, bool interactive)
+        public static TestRun Run(AppConfig cfg, AdfsMetadata md, TestDepth depth)
         {
+            bool interactive = depth == TestDepth.Deep;
             var run = new TestRun("WS-Federation");
             var endpoint = !string.IsNullOrEmpty(md.PassiveEndpoint) ? md.PassiveEndpoint : cfg.WsFedEndpoint;
 
-            if (string.IsNullOrEmpty(cfg.Realm))
-                run.Warn("Realm", "Kein Realm (wtrealm) konfiguriert.",
-                         "Realm = RP-Identifier (Trust Identifier) der Anwendung in ADFS.");
+            if (string.IsNullOrEmpty(cfg.WsFedRealm))
+            {
+                if (interactive)
+                    run.Warn("Realm", "Kein Realm (wtrealm) konfiguriert.",
+                             "Realm = RP-Identifier (Trust Identifier) der Anwendung in ADFS.");
+                else
+                    run.Info("Realm", "Kein Realm gesetzt - Schnelltest prueft nur die Endpoint-Erreichbarkeit.");
+            }
 
             // wreply: bei interaktiv die lokale Redirect-URI, sonst konfiguriertes/leer
-            string wreply = interactive ? cfg.RedirectUri : cfg.Wreply;
+            string wreply = interactive ? cfg.RedirectUri : cfg.WsFedReply;
             var url = endpoint +
                       (endpoint.Contains("?") ? "&" : "?") +
                       "wa=wsignin1.0" +
-                      "&wtrealm=" + Uri.EscapeDataString(cfg.Realm ?? "") +
+                      "&wtrealm=" + Uri.EscapeDataString(cfg.WsFedRealm ?? "") +
                       (string.IsNullOrEmpty(wreply) ? "" : "&wreply=" + Uri.EscapeDataString(wreply)) +
                       "&wctx=adfs-tester";
 
@@ -33,7 +39,7 @@ namespace AdfsTester
                 var r = HttpHelper.Get(url, cfg.TimeoutSeconds);
                 if (!r.Transport)
                 {
-                    run.Add(ErrorLogger.ToCheckResult("WS-Fed Endpoint", "GET " + endpoint, r.Error));
+                    run.Add(ErrorLogger.ToCheckResult("WS-Fed Endpoint", "GET " + url, r.Error));
                     return run;
                 }
 
@@ -47,7 +53,7 @@ namespace AdfsTester
                     run.Warn("WS-Fed Endpoint", "Unerwarteter HTTP-Status " + r.Status + ".",
                              "Body in Rohdaten pruefen.", ErrorLogger.Truncate(r.Body, 1500));
 
-                run.Info("Hinweis", "Fuer einen echten End-to-End-Test mit Token-Auswertung den interaktiven Modus verwenden.");
+                run.Info("Hinweis", "Fuer den End-to-End-Test mit Token-Auswertung den 'Tiefen Test' verwenden.");
                 return run;
             }
 
@@ -64,13 +70,12 @@ namespace AdfsTester
             if (!cap.Params.TryGetValue("wresult", out wresult) || string.IsNullOrEmpty(wresult))
             {
                 run.Error("WS-Fed Token", "Kein 'wresult' im Redirect empfangen.",
-                          "Parameter: " + string.Join(", ", new System.Collections.Generic.List<string>(cap.Params.Keys).ToArray()),
-                          cap.RawRequest);
+                          "Parameter: " + cap.KeysCsv(), cap.RawRequest);
                 return run;
             }
 
             run.Ok("WS-Fed Login", "wresult empfangen (" + wresult.Length + " Zeichen).");
-            SamlInspect.Inspect(run, wresult, md.PrimarySigningCert, cfg.Realm, "WS-Fed Token");
+            SamlInspect.Inspect(run, wresult, md.PrimarySigningCert, cfg.WsFedRealm, "WS-Fed Token");
             return run;
         }
 

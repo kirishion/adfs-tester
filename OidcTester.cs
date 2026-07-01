@@ -10,8 +10,9 @@ namespace AdfsTester
 {
     public static class OidcTester
     {
-        public static TestRun Run(AppConfig cfg, AdfsMetadata md, bool interactive)
+        public static TestRun Run(AppConfig cfg, AdfsMetadata md, TestDepth depth)
         {
+            bool deep = depth == TestDepth.Deep;
             var run = new TestRun("OIDC / OAuth");
 
             if (!md.OpenIdLoaded)
@@ -24,25 +25,46 @@ namespace AdfsTester
             string tokenEp = !string.IsNullOrEmpty(md.TokenEndpoint) ? md.TokenEndpoint : cfg.OAuthTokenEndpoint;
             string authEp = !string.IsNullOrEmpty(md.AuthorizeEndpoint) ? md.AuthorizeEndpoint : cfg.OAuthAuthorizeEndpoint;
 
+            // Endpunkt-/Discovery-Praesenz (gilt fuer beide Modi)
+            string epDetail = "authorize: " + (md.AuthorizeEndpoint.Length > 0) +
+                              ", token: " + (md.TokenEndpoint.Length > 0) + ", jwks-keys: " + md.JwksKeys.Count + ".";
+            if (md.AuthorizeEndpoint.Length > 0 && md.TokenEndpoint.Length > 0)
+                run.Ok("Endpunkte", epDetail);
+            else
+                run.Warn("Endpunkte", epDetail,
+                         "authorize_endpoint und/oder token_endpoint fehlen in der Discovery - OAuth/OIDC ist unvollstaendig konfiguriert.");
+
+            if (!deep)
+            {
+                run.Info("Schnelltest", "OAuth/OIDC-Discovery und Endpunkte geprueft. " +
+                         "Fuer echten Token-Bezug (Client-Credentials/ROPC/Authorization-Code) den 'Tiefen Test' verwenden.");
+                return run;
+            }
+
+            // ---- Tiefer Test ----
             if (string.IsNullOrEmpty(cfg.ClientId))
                 run.Warn("ClientId", "Keine ClientId konfiguriert - OAuth-Flows benoetigen eine registrierte Client-ID.");
 
-            if (interactive)
-                AuthorizationCode(run, cfg, md, authEp, tokenEp);
+            bool ranNonInteractive = false;
+            if (!string.IsNullOrEmpty(cfg.ClientId) && !string.IsNullOrEmpty(cfg.ClientSecret))
+            { ClientCredentials(run, cfg, md, tokenEp); ranNonInteractive = true; }
             else
-            {
-                if (!string.IsNullOrEmpty(cfg.ClientId) && !string.IsNullOrEmpty(cfg.ClientSecret))
-                    ClientCredentials(run, cfg, md, tokenEp);
-                else
-                    run.Info("Client-Credentials", "Uebersprungen (kein ClientId/ClientSecret).");
+                run.Info("Client-Credentials", "Uebersprungen (kein ClientId/ClientSecret).");
 
-                if (!string.IsNullOrEmpty(cfg.Username) && !string.IsNullOrEmpty(cfg.Password) && !string.IsNullOrEmpty(cfg.ClientId))
-                    Ropc(run, cfg, md, tokenEp);
-                else
-                    run.Info("ROPC", "Uebersprungen (Username/Passwort/ClientId noetig).");
+            if (!string.IsNullOrEmpty(cfg.Username) && !string.IsNullOrEmpty(cfg.Password) && !string.IsNullOrEmpty(cfg.ClientId))
+            { Ropc(run, cfg, md, tokenEp); ranNonInteractive = true; }
+            else
+                run.Info("ROPC", "Uebersprungen (Username/Passwort/ClientId noetig).");
 
-                run.Info("Hinweis", "Authorization-Code-Flow (id_token) nur im interaktiven Modus.");
-            }
+            // Browser-Code-Flow nur, wenn kein nicht-interaktiver Grant moeglich war
+            // (verhindert unnoetige Browser-Popups bei reinen Confidential-Clients).
+            if (string.IsNullOrEmpty(cfg.ClientId))
+                run.Info("Authorization-Code", "Uebersprungen (keine ClientId).");
+            else if (ranNonInteractive)
+                run.Info("Authorization-Code", "Uebersprungen - ein nicht-interaktiver Flow (Client-Credentials/ROPC) wurde bereits getestet. " +
+                         "Fuer den interaktiven Browser-Code-Flow ClientSecret/Zugangsdaten leeren.");
+            else
+                AuthorizationCode(run, cfg, md, authEp, tokenEp);
             return run;
         }
 
@@ -111,7 +133,7 @@ namespace AdfsTester
             if (!cap.Params.TryGetValue("code", out code) || string.IsNullOrEmpty(code))
             {
                 run.Error("Authorization-Code", "Kein 'code' im Redirect.",
-                          "Parameter: " + string.Join(", ", new List<string>(cap.Params.Keys).ToArray()), cap.RawRequest);
+                          "Parameter: " + cap.KeysCsv(), cap.RawRequest);
                 return;
             }
             run.Ok("Authorization-Code", "Code empfangen - tausche gegen Token ...");

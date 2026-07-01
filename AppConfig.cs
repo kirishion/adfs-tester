@@ -1,6 +1,7 @@
 // Konfiguration des ADFS-Test-Tools. Einfaches key=value-Textformat.
-// Secrets (ClientSecret, Password) werden mit Windows DPAPI (CurrentUser)
-// verschluesselt abgelegt.
+// Felder sind nach Protokoll gruppiert (Prefix Saml/WsFed/WsTrust/OAuth),
+// gemeinsame Felder ohne Prefix. Secrets werden mit Windows-DPAPI
+// (CurrentUser) verschluesselt abgelegt.
 
 using System;
 using System.Globalization;
@@ -12,30 +13,40 @@ namespace AdfsTester
 {
     public sealed class AppConfig
     {
-        // ---- ADFS-Basis ----
-        // Host oder Basis-URL des ADFS. Beispiel: "adfs.firma.tld" oder
-        // "https://adfs.firma.tld". Pfade werden automatisch angehaengt.
+        // ---- Gemeinsam ----
         public string AdfsHost = "adfs.firma.tld";
+        // Lokale Callback-URL fuer interaktive Tests (SAML-ACS + OAuth redirect_uri).
+        public string RedirectUri = "http://localhost:8765/adfs-tester/";
+        // Testbenutzer fuer nicht-interaktive Flows (WS-Trust, OAuth ROPC).
+        public string Username = "";
+        public string Password = "";
+        public int TimeoutSeconds = 30;
+        public int CertWarnDays = 30;
+        public bool VerifyServerCert = true;
 
-        // ---- WS-Federation / SAML (Relying Party) ----
-        public string Realm = "https://app.firma.tld/";   // wtrealm / SAML Audience (SP-EntityID)
-        public string Wreply = "";                          // optionales wreply / ACS-URL
+        // ---- WS-Federation ----
+        public string WsFedRealm = "";      // wtrealm
+        public string WsFedReply = "";      // wreply (optional)
+
+        // ---- WS-Trust ----
+        public string WsTrustAppliesTo = ""; // RP-Identifier (AppliesTo)
+
+        // ---- SAML 2.0 ----
+        public string SamlRpIdentifier = "";       // RelyingPartyIdentifier (Issuer/Audience)
+        public bool SamlSignRequest = false;        // AuthnRequest signieren
+        public string SamlSignStoreLocation = "LocalMachine";
+        public string SamlSignStoreName = "My";
+        public string SamlSignThumbprint = "";
+        public string SamlDecryptStoreLocation = "LocalMachine";
+        public string SamlDecryptStoreName = "My";
+        public string SamlDecryptThumbprint = "";   // fuer verschluesselte Assertions
+        public string SamlExpectedClaim = "";       // optional: dieser Claim muss vorhanden sein
 
         // ---- OAuth / OIDC ----
         public string ClientId = "";
         public string ClientSecret = "";
-        public string RedirectUri = "http://localhost:8765/adfs-tester/";
         public string Scope = "openid";
-        public string OAuthResource = "";   // ADFS-spezifisch: 'resource'-Parameter (RP-Identifier)
-
-        // ---- Credentials fuer nicht-interaktive Flows (WS-Trust, ROPC) ----
-        public string Username = "";
-        public string Password = "";
-
-        // ---- Optionen ----
-        public int TimeoutSeconds = 30;
-        public int CertWarnDays = 30;        // Warnung wenn Zertifikat < X Tage gueltig
-        public bool VerifyServerCert = true; // false = TLS-Fehler ignorieren (nur Diagnose)
+        public string OAuthResource = "";
 
         public static AppConfig Load(string path, Action<string> warn = null)
         {
@@ -58,18 +69,32 @@ namespace AdfsTester
                 switch (k)
                 {
                     case "AdfsHost": c.AdfsHost = v; break;
-                    case "Realm": c.Realm = v; break;
-                    case "Wreply": c.Wreply = v; break;
-                    case "ClientId": c.ClientId = v; break;
-                    case "ClientSecret": c.ClientSecret = SecretCrypto.Unprotect(v); break;
                     case "RedirectUri": c.RedirectUri = v; break;
-                    case "Scope": c.Scope = v; break;
-                    case "OAuthResource": c.OAuthResource = v; break;
                     case "Username": c.Username = v; break;
                     case "Password": c.Password = SecretCrypto.Unprotect(v); break;
                     case "TimeoutSeconds": c.TimeoutSeconds = ParseInt(v, 30); break;
                     case "CertWarnDays": c.CertWarnDays = ParseInt(v, 30); break;
                     case "VerifyServerCert": c.VerifyServerCert = ParseBool(v, true); break;
+
+                    case "WsFedRealm": c.WsFedRealm = v; break;
+                    case "WsFedReply": c.WsFedReply = v; break;
+
+                    case "WsTrustAppliesTo": c.WsTrustAppliesTo = v; break;
+
+                    case "SamlRpIdentifier": c.SamlRpIdentifier = v; break;
+                    case "SamlSignRequest": c.SamlSignRequest = ParseBool(v, false); break;
+                    case "SamlSignStoreLocation": c.SamlSignStoreLocation = v; break;
+                    case "SamlSignStoreName": c.SamlSignStoreName = v; break;
+                    case "SamlSignThumbprint": c.SamlSignThumbprint = CleanThumb(v); break;
+                    case "SamlDecryptStoreLocation": c.SamlDecryptStoreLocation = v; break;
+                    case "SamlDecryptStoreName": c.SamlDecryptStoreName = v; break;
+                    case "SamlDecryptThumbprint": c.SamlDecryptThumbprint = CleanThumb(v); break;
+                    case "SamlExpectedClaim": c.SamlExpectedClaim = v; break;
+
+                    case "ClientId": c.ClientId = v; break;
+                    case "ClientSecret": c.ClientSecret = SecretCrypto.Unprotect(v); break;
+                    case "Scope": c.Scope = v; break;
+                    case "OAuthResource": c.OAuthResource = v; break;
                 }
             }
             return c;
@@ -79,26 +104,44 @@ namespace AdfsTester
         {
             var sb = new StringBuilder();
             sb.AppendLine("# ADFS-Test-Tool - Konfiguration");
-            sb.AppendLine("# ClientSecret und Password sind mit Windows DPAPI (CurrentUser) verschluesselt.");
+            sb.AppendLine("# Password und ClientSecret sind mit Windows DPAPI (CurrentUser) verschluesselt.");
+            sb.AppendLine();
+            sb.AppendLine("# --- Gemeinsam ---");
             sb.AppendLine("AdfsHost=" + AdfsHost);
-            sb.AppendLine("Realm=" + Realm);
-            sb.AppendLine("Wreply=" + Wreply);
-            sb.AppendLine("ClientId=" + ClientId);
-            sb.AppendLine("ClientSecret=" + SecretCrypto.Protect(ClientSecret));
             sb.AppendLine("RedirectUri=" + RedirectUri);
-            sb.AppendLine("Scope=" + Scope);
-            sb.AppendLine("OAuthResource=" + OAuthResource);
             sb.AppendLine("Username=" + Username);
             sb.AppendLine("Password=" + SecretCrypto.Protect(Password));
             sb.AppendLine("TimeoutSeconds=" + TimeoutSeconds.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("CertWarnDays=" + CertWarnDays.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("VerifyServerCert=" + (VerifyServerCert ? "true" : "false"));
+            sb.AppendLine();
+            sb.AppendLine("# --- WS-Federation ---");
+            sb.AppendLine("WsFedRealm=" + WsFedRealm);
+            sb.AppendLine("WsFedReply=" + WsFedReply);
+            sb.AppendLine();
+            sb.AppendLine("# --- WS-Trust ---");
+            sb.AppendLine("WsTrustAppliesTo=" + WsTrustAppliesTo);
+            sb.AppendLine();
+            sb.AppendLine("# --- SAML 2.0 ---");
+            sb.AppendLine("SamlRpIdentifier=" + SamlRpIdentifier);
+            sb.AppendLine("SamlSignRequest=" + (SamlSignRequest ? "true" : "false"));
+            sb.AppendLine("SamlSignStoreLocation=" + SamlSignStoreLocation);
+            sb.AppendLine("SamlSignStoreName=" + SamlSignStoreName);
+            sb.AppendLine("SamlSignThumbprint=" + SamlSignThumbprint);
+            sb.AppendLine("SamlDecryptStoreLocation=" + SamlDecryptStoreLocation);
+            sb.AppendLine("SamlDecryptStoreName=" + SamlDecryptStoreName);
+            sb.AppendLine("SamlDecryptThumbprint=" + SamlDecryptThumbprint);
+            sb.AppendLine("SamlExpectedClaim=" + SamlExpectedClaim);
+            sb.AppendLine();
+            sb.AppendLine("# --- OAuth / OIDC ---");
+            sb.AppendLine("ClientId=" + ClientId);
+            sb.AppendLine("ClientSecret=" + SecretCrypto.Protect(ClientSecret));
+            sb.AppendLine("Scope=" + Scope);
+            sb.AppendLine("OAuthResource=" + OAuthResource);
             File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
         }
 
-        // ---- Abgeleitete URLs (ADFS-Standardpfade) ----------------------------
-
-        // Normalisierte Basis-URL: "https://<host>" ohne Trailing-Slash.
+        // ---- Abgeleitete URLs (ADFS-Standardpfade) ----
         public string BaseUrl
         {
             get
@@ -112,12 +155,8 @@ namespace AdfsTester
             }
         }
 
-        public string FederationMetadataUrl
-        { get { return BaseUrl + "/FederationMetadata/2007-06/FederationMetadata.xml"; } }
-
-        public string OpenIdConfigurationUrl
-        { get { return BaseUrl + "/adfs/.well-known/openid-configuration"; } }
-
+        public string FederationMetadataUrl { get { return BaseUrl + "/FederationMetadata/2007-06/FederationMetadata.xml"; } }
+        public string OpenIdConfigurationUrl { get { return BaseUrl + "/adfs/.well-known/openid-configuration"; } }
         public string WsFedEndpoint { get { return BaseUrl + "/adfs/ls/"; } }
         public string Saml2Endpoint { get { return BaseUrl + "/adfs/ls/"; } }
         public string OAuthAuthorizeEndpoint { get { return BaseUrl + "/adfs/oauth2/authorize"; } }
@@ -136,6 +175,14 @@ namespace AdfsTester
             if (string.Equals(v, "true", StringComparison.OrdinalIgnoreCase) || v == "1") return true;
             if (string.Equals(v, "false", StringComparison.OrdinalIgnoreCase) || v == "0") return false;
             return def;
+        }
+
+        public static string CleanThumb(string t)
+        {
+            if (t == null) return "";
+            var sb = new StringBuilder();
+            foreach (var ch in t) if (Uri.IsHexDigit(ch)) sb.Append(char.ToUpperInvariant(ch));
+            return sb.ToString();
         }
     }
 

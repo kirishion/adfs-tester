@@ -9,6 +9,10 @@ namespace AdfsTester
 {
     public enum Severity { Ok = 0, Info = 1, Warning = 2, Error = 3 }
 
+    // Schnelltest: ohne Browser/Zugangsdaten - nur Erreichbarkeit/Endpunkte/Config.
+    // Tiefer Test: End-to-End inkl. Anmeldung, Token, Signatur/Claims.
+    public enum TestDepth { Quick, Deep }
+
     public sealed class CheckResult
     {
         public string Step;            // z.B. "TLS-Zertifikat Hostname-Match"
